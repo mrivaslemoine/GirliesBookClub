@@ -1,2 +1,2 @@
 # GirliesBookClub
-Tool to help submit and choose periodic submissions
+Tool to help submit and choose books
