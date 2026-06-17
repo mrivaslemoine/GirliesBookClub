@@ -437,7 +437,7 @@
    here. It will look like:
    https://script.google.com/macros/s/AKfycb.../exec
    ========================================================= */
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzMq3ZEpXlN_ewBFhuZON_boi3YjVtumwhNeExcboz-VGL2v2b14gg80Vj4GcecjGZC/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzMq3ZEpXlN_ewBFhuZON_boi3YjVtumwhNeExcboz-VGL2v2b14gg80Vj4GcecjGZC/exe ";
 
 let nominations = [];
 let winner = null;
@@ -455,7 +455,15 @@ function formatMonthKey(key) {
 }
 function deadline15() {
   const d = new Date();
-  return new Date(d.getFullYear(), d.getMonth(), 15, 23, 59, 59);
+  // One-off override: June 2026 nominations close on the 20th instead of the 15th.
+  // All other months use the default 15th. Add more entries here if other months
+  // ever need a custom deadline, using the same "YYYY-M" key format.
+  const overrides = {
+    "2026-6": 20
+  };
+  const key = d.getFullYear() + "-" + (d.getMonth() + 1);
+  const day = overrides[key] || 15;
+  return new Date(d.getFullYear(), d.getMonth(), day, 23, 59, 59);
 }
 function countdownText() {
   const diff = deadline15() - new Date();
