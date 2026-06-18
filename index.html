@@ -465,7 +465,7 @@
    here. It will look like:
    https://script.google.com/macros/s/AKfycb.../exec
    ========================================================= */
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw_y9Y6B958Pk-ILQzMA3zoZKiHPlqS-huNwPDJCl-4MzXFOyrAmwB1emCYVue1lgYN/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw-WDTzN7lFiivYw3RW16LEDDsKDvugLuzbybGLBncCUsD1VFIou3W9TfZSbsIG11o_/exec";
 
 let nominations = [];
 let winner = null;
@@ -674,6 +674,11 @@ async function apiCall(action, payload) {
 async function loadData() {
   try {
     const data = await apiCall("getData", {});
+    if (data.error) {
+      document.getElementById("setupBanner").style.display = "block";
+      document.getElementById("setupBanner").innerHTML = "⚠️ <strong>Server error:</strong> " + escapeHtml(data.error);
+      return;
+    }
     nominations = data.nominations || [];
     winner = data.winner || null;
     history = data.history || [];
@@ -683,6 +688,7 @@ async function loadData() {
   } catch (e) {
     console.error(e);
     document.getElementById("setupBanner").style.display = "block";
+    document.getElementById("setupBanner").innerHTML = "⚠️ <strong>Connection error:</strong> " + escapeHtml(e.message || String(e));
   }
   renderNominations();
   renderSelection();
