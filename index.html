@@ -263,6 +263,39 @@
   }
   .archive-tag.read { background: #e8f5ee; color: #3a7d5e; }
   .archive-tag.unread { background: #fdf0ea; color: #c2622c; }
+  .addback-btn {
+    font-size: 0.68rem;
+    font-family: -apple-system, sans-serif;
+    font-weight: 600;
+    padding: 0.25rem 0.6rem;
+    background: #fff;
+    border: 1px solid #ddd7cc;
+    border-radius: 3px;
+    color: #1a1a2e;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .addback-btn:hover { background: #f0ebe2; }
+  .rollover-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    padding: 0.4rem 0;
+    font-family: -apple-system, sans-serif;
+    font-size: 0.85rem;
+  }
+  .rollover-row label { flex: 1; cursor: pointer; }
+  .rollover-month {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #c2622c;
+    font-family: -apple-system, sans-serif;
+    margin-top: 0.9rem;
+    margin-bottom: 0.3rem;
+  }
+  .rollover-month:first-child { margin-top: 0; }
   .pick-btn {
     padding: 0.75rem 1.75rem;
     background: #c2622c;
@@ -423,9 +456,15 @@
 
     <div class="admin-toggle" id="adminToggle">⚙ Club organizer options</div>
     <div class="admin-panel" id="adminPanel">
-      <p class="admin-note">These tools are for the club organizer. Resetting nominations will clear all entries for the month.</p>
-      <button class="danger-btn" id="resetBtn">Reset nominations for new month</button>
-      <button class="danger-btn" id="clearWinnerBtn">Clear selected book</button>
+      <p class="admin-note">These tools are for the club organizer.</p>
+      <div style="margin-bottom:1rem;">
+        <button class="danger-btn" id="redrawBtn">Select a new book now</button>
+        <button class="danger-btn" id="resetBtn">Reset nominations for new month</button>
+        <button class="danger-btn" id="clearWinnerBtn">Clear selected book</button>
+      </div>
+      <div class="admin-note" style="margin-bottom:0.5rem;"><strong>Roll specific submissions into next month's pool</strong> — check any unread past submissions below, then confirm.</div>
+      <div id="rolloverPicker"></div>
+      <button class="submit-btn" id="rolloverConfirmBtn" style="margin-top:0.75rem;">Roll Selected Into Next Pool</button>
     </div>
 
   </div>
@@ -437,12 +476,15 @@
    here. It will look like:
    https://script.google.com/macros/s/AKfycb.../exec
    ========================================================= */
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbztbR4lQUoau49xoMMazQDy-VD0qnQQWgpzEQXAj1ULKXPc3xivu2vZsB0xt32BCf4/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzFRzAPAGWgHZh0Jd3R85g7UJUJqUlewyLPEbyH94Mrr5Jjvpi5qcPPEI6ye-0dGdeR/exec";
 
 let nominations = [];
 let winner = null;
 let history = [];
 let submissionArchive = [];
+let monthStatus = "OPEN";
+let serverDeadline = null;
+let rolloverSelections = {}; // key: month|name|title -> bool
 
 function monthLabel() {
   return new Date().toLocaleString("default", { month: "long", year: "numeric" });
@@ -541,12 +583,13 @@ function renderSelection() {
         <div class="winner-nominated">Nominated by ${escapeHtml(winner.nominatedBy || "")} · Drawn ${drawnDate}</div>
       </div>`;
   } else {
+    const deadlineStr = serverDeadline
+      ? new Date(serverDeadline).toLocaleDateString("default", { month: "long", day: "numeric" })
+      : deadline15().toLocaleDateString("default", { month: "long", day: "numeric" });
     wrap.innerHTML = `
-      <div style="text-align:center;padding-top:1rem;">
-        <button class="pick-btn" id="drawBtn">Draw This Month's Book</button>
-        <p class="deadline-note">Randomly drawn from all nominations on the 15th.</p>
+      <div style="text-align:center;padding:1rem 0;">
+        <p class="deadline-note" style="margin-top:0;">This month's book will be randomly drawn automatically on <strong>${deadlineStr}</strong>. No action needed — check back after that date.</p>
       </div>`;
-    document.getElementById("drawBtn").addEventListener("click", drawWinner);
   }
 }
 
@@ -588,8 +631,43 @@ function renderArchive() {
           <div class="archive-meta">${item.author ? escapeHtml(item.author) + " · " : ""}nominated by ${escapeHtml(item.nominatedBy)}</div>
         </div>
         <span class="archive-tag ${item.status === 'READ' ? 'read' : 'unread'}">${item.status === 'READ' ? 'Read' : 'Not yet read'}</span>
+        ${item.status !== 'READ' ? `<button class="addback-btn" data-name="${escapeHtml(item.nominatedBy)}" data-title="${escapeHtml(item.title)}" data-author="${escapeHtml(item.author)}">Add to next pool</button>` : ""}
       </div>`).join("")}
   `).join("");
+
+  wrap.querySelectorAll(".addback-btn").forEach(btn => {
+    btn.addEventListener("click", () => addToPool(btn.dataset.name, btn.dataset.title, btn.dataset.author));
+  });
+}
+
+function renderRolloverPicker() {
+  const wrap = document.getElementById("rolloverPicker");
+  const unread = submissionArchive.filter(i => i.status !== "READ");
+  if (!unread.length) {
+    wrap.innerHTML = '<div class="empty-state" style="padding:0.75rem 0;">No unread past submissions available to roll over.</div>';
+    return;
+  }
+  const groups = [];
+  const seen = {};
+  unread.forEach(item => {
+    if (!seen[item.month]) { seen[item.month] = []; groups.push({ month: item.month, items: seen[item.month] }); }
+    seen[item.month].push(item);
+  });
+  wrap.innerHTML = groups.map(g => `
+    <div class="rollover-month">${escapeHtml(formatMonthKey(g.month))}</div>
+    ${g.items.map((item, i) => {
+      const key = g.month + "|" + item.nominatedBy + "|" + item.title;
+      const checked = rolloverSelections[key] ? "checked" : "";
+      return `
+      <div class="rollover-row">
+        <input type="checkbox" data-key="${escapeHtml(key)}" data-name="${escapeHtml(item.nominatedBy)}" data-title="${escapeHtml(item.title)}" data-author="${escapeHtml(item.author)}" ${checked} class="rollover-checkbox">
+        <label>${escapeHtml(item.title)}${item.author ? ` <span class="archive-meta">by ${escapeHtml(item.author)}</span>` : ""} <span class="archive-meta">— ${escapeHtml(item.nominatedBy)}</span></label>
+      </div>`;
+    }).join("")}
+  `).join("");
+  wrap.querySelectorAll(".rollover-checkbox").forEach(cb => {
+    cb.addEventListener("change", () => { rolloverSelections[cb.dataset.key] = cb.checked; });
+  });
 }
 
 function escapeHtml(str) {
@@ -600,8 +678,6 @@ function escapeHtml(str) {
 
 function setLoadingButtons(isLoading) {
   document.getElementById("submitBtn").disabled = isLoading;
-  const drawBtn = document.getElementById("drawBtn");
-  if (drawBtn) drawBtn.disabled = isLoading;
 }
 
 // ---- API calls to Google Apps Script ----
@@ -622,6 +698,8 @@ async function loadData() {
     winner = data.winner || null;
     history = data.history || [];
     submissionArchive = data.submissionArchive || [];
+    monthStatus = data.status || "OPEN";
+    serverDeadline = data.deadline || null;
   } catch (e) {
     console.error(e);
     document.getElementById("setupBanner").style.display = "block";
@@ -630,6 +708,7 @@ async function loadData() {
   renderSelection();
   renderHistory();
   renderArchive();
+  renderRolloverPicker();
 }
 
 async function submitNomination() {
@@ -660,16 +739,61 @@ async function submitNomination() {
 
 async function drawWinner() {
   if (!nominations.length) return showToast("No nominations to draw from.", "error");
-  setLoadingButtons(true);
   try {
     const data = await apiCall("drawWinner", {});
     winner = data.winner || null;
+    if (data.error) showToast(data.error, "error");
     renderSelection();
   } catch (e) {
     console.error(e);
     showToast("Couldn't draw a winner — try again.", "error");
-  } finally {
-    setLoadingButtons(false);
+  }
+}
+
+async function redrawWinner() {
+  if (!confirm("Pick a new random book for this month? This replaces the current selection.")) return;
+  try {
+    const data = await apiCall("redraw", {});
+    winner = data.winner || null;
+    renderSelection();
+    showToast("New book selected.", "success");
+  } catch (e) {
+    console.error(e);
+    alert("Couldn't redraw — try again.");
+  }
+}
+
+async function addToPool(name, title, author) {
+  try {
+    const data = await apiCall("addToPool", { name, title, author });
+    nominations = data.nominations || nominations;
+    renderNominations();
+    showToast(`"${title}" added back into the active pool.`, "success");
+  } catch (e) {
+    console.error(e);
+    showToast("Couldn't add that back — try again.", "error");
+  }
+}
+
+async function rolloverSelectedSubmissions() {
+  const items = Object.keys(rolloverSelections)
+    .filter(k => rolloverSelections[k])
+    .map(k => {
+      const cb = document.querySelector(`.rollover-checkbox[data-key="${k.replace(/"/g, '\\"')}"]`);
+      return cb ? { name: cb.dataset.name, title: cb.dataset.title, author: cb.dataset.author } : null;
+    })
+    .filter(Boolean);
+  if (!items.length) return showToast("No submissions selected.", "error");
+  try {
+    const data = await apiCall("rolloverSelected", { items });
+    nominations = data.nominations || nominations;
+    renderNominations();
+    rolloverSelections = {};
+    renderRolloverPicker();
+    showToast(`${items.length} submission(s) rolled into the active pool.`, "success");
+  } catch (e) {
+    console.error(e);
+    showToast("Couldn't roll those over — try again.", "error");
   }
 }
 
@@ -714,6 +838,8 @@ setInterval(tickCountdown, 60000);
 document.getElementById("submitBtn").addEventListener("click", submitNomination);
 document.getElementById("resetBtn").addEventListener("click", resetMonth);
 document.getElementById("clearWinnerBtn").addEventListener("click", clearWinner);
+document.getElementById("redrawBtn").addEventListener("click", redrawWinner);
+document.getElementById("rolloverConfirmBtn").addEventListener("click", rolloverSelectedSubmissions);
 document.getElementById("adminToggle").addEventListener("click", () => {
   const p = document.getElementById("adminPanel");
   p.style.display = p.style.display === "block" ? "none" : "block";
