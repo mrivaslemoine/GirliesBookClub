@@ -248,6 +248,7 @@
     gap: 0.75rem;
     padding: 0.45rem 0;
     font-family: -apple-system, sans-serif;
+    flex-wrap: wrap;
   }
   .archive-book-info { flex: 1; min-width: 0; }
   .archive-title { font-family: Georgia, serif; font-size: 0.9rem; }
@@ -296,19 +297,6 @@
     margin-bottom: 0.3rem;
   }
   .rollover-month:first-child { margin-top: 0; }
-  .pick-btn {
-    padding: 0.75rem 1.75rem;
-    background: #c2622c;
-    color: #fff;
-    border: none;
-    border-radius: 3px;
-    font-family: -apple-system, sans-serif;
-    font-size: 0.88rem;
-    font-weight: 700;
-    cursor: pointer;
-    letter-spacing: 0.04em;
-  }
-  .pick-btn:disabled { opacity: 0.6; cursor: not-allowed; }
   .winner-box {
     padding: 1.5rem;
     background: #1a1a2e;
@@ -362,6 +350,7 @@
     font-weight: 700;
     cursor: pointer;
     margin-right: 0.5rem;
+    margin-bottom: 0.5rem;
   }
   .loading-screen {
     display: flex;
@@ -398,7 +387,7 @@
   <div class="header">
     <div class="eyebrow">📚 Monthly Reading</div>
     <h1>Girlies Book Club</h1>
-    <p class="header-sub">Nominate your picks · A winner is chosen on the 15th</p>
+    <p class="header-sub">Nominate your picks · A winner is chosen automatically at the deadline</p>
     <div class="badge" id="monthBadge"></div>
   </div>
 
@@ -476,7 +465,7 @@
    here. It will look like:
    https://script.google.com/macros/s/AKfycb.../exec
    ========================================================= */
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzFRzAPAGWgHZh0Jd3R85g7UJUJqUlewyLPEbyH94Mrr5Jjvpi5qcPPEI6ye-0dGdeR/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxE31wC3cs_6iO-V2hYqQc77gABDSVHFxb2W2bIUP5QW_2Rb6C6f9G4KQa0ZcRaI1v8/exec";
 
 let nominations = [];
 let winner = null;
@@ -490,19 +479,13 @@ function monthLabel() {
   return new Date().toLocaleString("default", { month: "long", year: "numeric" });
 }
 function formatMonthKey(key) {
-  // key like "2026-6"
   const [y, m] = String(key).split("-").map(Number);
   if (!y || !m) return key;
   return new Date(y, m - 1, 1).toLocaleString("default", { month: "long", year: "numeric" });
 }
 function deadline15() {
   const d = new Date();
-  // One-off override: June 2026 nominations close on the 20th instead of the 15th.
-  // All other months use the default 15th. Add more entries here if other months
-  // ever need a custom deadline, using the same "YYYY-M" key format.
-  const overrides = {
-    "2026-6": 20
-  };
+  const overrides = { "2026-6": 20 };
   const key = d.getFullYear() + "-" + (d.getMonth() + 1);
   const day = overrides[key] || 15;
   return new Date(d.getFullYear(), d.getMonth(), day, 23, 59, 59);
@@ -615,10 +598,7 @@ function renderArchive() {
   const groups = [];
   const seen = {};
   submissionArchive.forEach(item => {
-    if (!seen[item.month]) {
-      seen[item.month] = [];
-      groups.push({ month: item.month, items: seen[item.month] });
-    }
+    if (!seen[item.month]) { seen[item.month] = []; groups.push({ month: item.month, items: seen[item.month] }); }
     seen[item.month].push(item);
   });
 
@@ -655,7 +635,7 @@ function renderRolloverPicker() {
   });
   wrap.innerHTML = groups.map(g => `
     <div class="rollover-month">${escapeHtml(formatMonthKey(g.month))}</div>
-    ${g.items.map((item, i) => {
+    ${g.items.map((item) => {
       const key = g.month + "|" + item.nominatedBy + "|" + item.title;
       const checked = rolloverSelections[key] ? "checked" : "";
       return `
@@ -724,29 +704,20 @@ async function submitNomination() {
   setLoadingButtons(true);
   try {
     const data = await apiCall("submitNomination", { name, books });
-    nominations = data.nominations || nominations;
-    renderNominations();
-    document.getElementById("memberName").value = "";
-    renderBookInputs();
-    showToast(`Thanks, ${name}! Nominations saved. You can re-submit to update them before the 15th.`, "success");
+    if (data.error) {
+      showToast(data.error, "error");
+    } else {
+      nominations = data.nominations || nominations;
+      renderNominations();
+      document.getElementById("memberName").value = "";
+      renderBookInputs();
+      showToast(`Thanks, ${name}! Nominations saved. You can re-submit to update them before the deadline.`, "success");
+    }
   } catch (e) {
     console.error(e);
     showToast("Couldn't save — check your connection and try again.", "error");
   } finally {
     setLoadingButtons(false);
-  }
-}
-
-async function drawWinner() {
-  if (!nominations.length) return showToast("No nominations to draw from.", "error");
-  try {
-    const data = await apiCall("drawWinner", {});
-    winner = data.winner || null;
-    if (data.error) showToast(data.error, "error");
-    renderSelection();
-  } catch (e) {
-    console.error(e);
-    showToast("Couldn't draw a winner — try again.", "error");
   }
 }
 
